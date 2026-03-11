@@ -1,5 +1,13 @@
 # CrazyBebop — 2025-07-16 build (Mar 10, 2026)
 
+## Mar 11 Update
+
+### CustomIcon — Fixed
+- Rewrote `EnableIcon.qjs` to support any icon size and bit depth (including 256x256 32bpp PNG)
+- Original upstream script only accepted 8bpp 32x32 icons
+- Now targets Group 123 (main app icon group) and allocates new PE space for oversized icons
+- All icon display contexts (Explorer, taskbar, window title) show the custom icon
+
 ## Mar 10 Update
 
 ### CustomJobs — Complete for 07-16
