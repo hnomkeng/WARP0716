@@ -81,7 +81,7 @@ Found a bug or have a suggestion? Post it in the [Issues](https://github.com/Cra
 
 ## Donate
 
-If this project saved you time, consider [donating](https://www.paypal.com/donate/?hosted_button_id=WW9FD6SLEZ5BN). The PayPal is my wife's — I don't have one. Donations are appreciated but never required.
+<a href="https://www.buymeacoffee.com/crazybebop"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=&slug=crazybebop&button_colour=5F7FFF&font_colour=ffffff&font_family=Cookie&outline_colour=000000&coffee_colour=FFDD00" /></a>
 
 ## Credits
 

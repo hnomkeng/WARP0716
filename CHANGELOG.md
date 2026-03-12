@@ -1,5 +1,16 @@
 # CrazyBebop — 2025-07-16 build (Mar 10, 2026)
 
+## Mar 12 Update
+
+### RagHash.dat Crash Fix
+- Stale or leftover `RagHash.dat` in the client folder no longer crashes the client
+- Added steps 4.9–4.12 to NoGGuard (`DisableProtect.qjs`): patches the CGGHashMgr Constructor to skip file loading, and stubs `FindByFileHash`/`FindByHashPair` to return success
+- No more need to manually delete `RagHash.dat`
+
+### GRFsFromIni Crash Fix
+- Invalid or nonexistent GRF entries in `DATA.INI` no longer crash the client
+- Added `GetFileAttributesA` file existence check before `AddPak` in `MultiGRFs.qjs`
+
 ## Mar 11 Update
 
 ### CustomIcon — Fixed
@@ -67,7 +78,7 @@
 - **NoGNJoyLaunch** — GNJoy launch URLs are already zeroed in the EXE. Patch script removed
 
 ## Patches that auto-skip on 07-16 (validate returns false)
-- **CustomJobs** — Not fixed. 07-16 uses ALL UPPERCASE job name tables with a completely different structure. Needs a full pattern rewrite to support
+- **CustomJobs** — FIXED (Mar 9-11). Build-specific `apply0716()` handles uppercase job names + VS2022 differences. Phases 1-3 complete. Phase 4 (cosmetic name display) not started
 - **CustomSlotHLColor** — Not fixed. 07-16 uses CSkinMgr for slot highlight colors instead of hardcoded values
 
 ## Verified Working

@@ -153,7 +153,7 @@ NoGGuard = function(_)
 		
 		$$(_, 4.3, `Go inside the testing function`)
 		addr = Exe.GetTgtAddr(addr + 1, PHYSICAL);
-		
+
 		if (ROC.FullVer != 14.29)
 		{
 			$$(_, 4.4, `Find the assignment call`)
@@ -198,8 +198,75 @@ NoGGuard = function(_)
 		
 		$$(_, 4.8, `Replace the -1 assignment with this one`)
 		Exe.SetHex(addr2, ins + NOPs(parts.byteCount(0) - ins.Size));
+
+		$$(_, 4.9, `Find Constructor call inside CreateInstance to patch RagHash.dat handling`)
+
+		// Recover CreateInstance physical address (addr was modified in step 4.6)
+		let createInstAddr = addr - (ROC.FullVer == 14.29 ? 0x50 : 0x120);
+
+		// Find: TEST EAX,EAX; JZ short; MOV ECX,EAX; CALL Constructor
+		let ctorPat =
+			TEST(EAX, EAX)    //test eax, eax
+		+	JZ(WCp)            //jz short _allocFail
+		+	MOV(ECX, EAX)      //mov ecx, eax
+		+	CALL(ALLWC)        //call Constructor
+		;
+
+		let ctorCallAddr = Exe.FindHex(ctorPat, createInstAddr, createInstAddr + 0x60);
+		if (ctorCallAddr < 0)
+			throw Error("Constructor call not found in CreateInstance");
+
+		// Get Constructor physical address (CALL opcode at +6, operand at +7)
+		let ctorAddr = Exe.GetTgtAddr(ctorCallAddr + 7, PHYSICAL);
+
+		$$(_, '4.10', `Skip RagHash.dat file loading in Constructor`)
+
+		// After CFileLoader init, Constructor has: TEST EAX,EAX; JZ <near> (skip to return)
+		// The near JZ (0F 84) skips all file loading. Convert to unconditional JMP.
+		// Search past the first TEST+short-JZ (operator_new null check) at offset ~0x60
+		let skipPat =
+			TEST(EAX, EAX)   //test eax, eax
+		+	JZ(POS2WC)        //jz near _skipFileLoading
+		;
+
+		let skipAddr = Exe.FindHex(skipPat, ctorAddr + 0x70, ctorAddr + 0x100);
+		if (skipAddr < 0)
+			throw Error("Constructor RagHash skip point not found");
+
+		// Always skip file loading — prevents stale RagHash.dat crash
+		Exe.SetJMP(skipAddr + 2);
+
+		$$(_, '4.11', `Stub FindByFileHash to always return success`)
+
+		// FindByFileHash is at Constructor + 0x2E0 (thiscall, 1 stack param, RET 4)
+		let fbfhAddr = ctorAddr + 0x2E0;
+
+		// Verify function entry (PUSH EBP; MOV EBP,ESP)
+		if (Exe.FindHex(FP_START, fbfhAddr, fbfhAddr + 3) !== fbfhAddr)
+			throw Error("FindByFileHash entry verification failed");
+
+		Exe.SetHex(fbfhAddr,
+			XOR(EAX, EAX)     //xor eax, eax
+		+	INC(EAX)           //inc eax
+		+	RETN(4)            //ret 4
+		);
+
+		$$(_, '4.12', `Stub FindByHashPair to always return success`)
+
+		// FindByHashPair is at Constructor + 0x3E0 (thiscall, 3 stack params, RET 12)
+		let fbhpAddr = ctorAddr + 0x3E0;
+
+		// Verify function entry
+		if (Exe.FindHex(FP_START, fbhpAddr, fbhpAddr + 3) !== fbhpAddr)
+			throw Error("FindByHashPair entry verification failed");
+
+		Exe.SetHex(fbhpAddr,
+			XOR(EAX, EAX)     //xor eax, eax
+		+	INC(EAX)           //inc eax
+		+	RETN(0xC)          //ret 12
+		);
 	}
-	
+
 	return true;
 };
 
