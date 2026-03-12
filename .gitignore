@@ -1,5 +1,6 @@
-# Ignore Outputs folder and everything inside
-/Outputs/
+# Ignore Outputs contents but keep the folder
+/Outputs/*
+!/Outputs/.gitkeep
 
 # Ignore root-level config files
 /Settings.yml
