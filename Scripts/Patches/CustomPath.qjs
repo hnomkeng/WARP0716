@@ -25,9 +25,9 @@
 |**************************************************************************|
 *                                                                          *
 *   Author(s)     : Neo-Mind, Jian, Secret, Andrei (4144), X-EcutiOnner,   *
-*                    Skylove                                               *
+*                    Skylove, CrazyBebop                                   *
 *   Created Date  : 2020-11-09                                             *
-*   Last Modified : 2026-03-09                                             *
+*   Last Modified : 2026-04-21                                             *
 *                                                                          *
 \**************************************************************************/
 
@@ -147,26 +147,158 @@ CustomPath = function(_)
 		dest = EAX;
 	}
 
+	/* Rune-system files are loaded via inline MOVUPS+MOVQ+MOV(byte|dword)
+	 * copy sequences with hardcoded byte counts and length immediates
+	 * (see Ghidra RE notes on CRuneSystemMgr::LoadLuaTables).  No PUSH
+	 * reference exists for the 4 MOV-loaded sites, so they need their
+	 * own detection path. */
+	/* Byte-copy sites (MOV r8, m8 at +0x25) can be extended by up to +3
+	 * chars via the byte->dword opcode flip.  Dword-copy sites already
+	 * consume 4 bytes there, no room left to extend. */
+	const isRuneByteCopy  = (_ === 'CustomitemDecomLub' || _ === 'CustomRuneInfoLub');
+	const isRuneDwordCopy = (_ === 'CustomRuneSystemIdLub');
+	const isRuneSystem_MOV = isRuneByteCopy || isRuneDwordCopy;
+	const isRuneSystemTable = (_ === 'CustomRuneSystemTableLub');
+	const isRuneMOVSite = isRuneSystem_MOV || isRuneSystemTable;
+	const isRunePush = (_ === 'CustomRuneDescLub'       ||
+	                    _ === 'CustomRuneSetDescLub'    ||
+	                    _ === 'CustomRuneSetInfoLub'    ||
+	                    _ === 'CustomRuneRewardLub'     ||
+	                    _ === 'CustomRuneSystemInfoLub');
+
 	{
 		const hasSite = (addr >= 0) || !!refAddrs;
-		if (!hasSite && !isQuestQuali)
+		if (!hasSite && !isQuestQuali && !isRuneMOVSite)
 			throw Error(`'${name} not used`);
 	}
 
 	const suf = strType === "Prefix" ? "without .lub" : "";
 	const recVal = this.Data.get(_).recommendedValue;
 	const recNote = recVal ? `<br><br><small><i>If you're using llchrisll Translation Project this is Recommended.</i></small><br><br>Recommended value: <b>${recVal}</b><br>` : "";
+	/* MOV sites have architectural length limits:
+	 *   - byte-copy set (itemDecom / rune_info): extensible up to +3
+	 *     by flipping MOV byte -> MOV dword at offset +0x25/+0x2B.
+	 *   - runesystemid: already MOV dword; locked at origLen.
+	 *   - RuneSystemTable: 2 MOVUPS copying exactly 32 bytes; locked at origLen.
+	 * Caps below are upper bounds; per-site validation happens after
+	 * we read the current opcode. */
+	const runeCap = isRuneByteCopy ? name.length + 3
+	              : isRuneDwordCopy ? name.length
+	              : isRuneSystemTable ? name.length
+	              : isRunePush ? name.length
+	              : 64;
 	const newStr = Exe.GetUserInput(
 		varName, D_Text, `File ${strType}`,
 		`Enter the new <b>${prefix} ${strType}</b> (relative to RO folder) ${suf}${recNote}`,
-		name, {minLen: 1, maxLen: 64}
+		name, {minLen: 1, maxLen: runeCap}
 	);
 	if (newStr === false)
 		Cancel(strType, name);
 
 	const [, freeVir] = Exe.AddFromVar(varName);
 
-	if (refAddrs == undefined)
+	/* --- Rune MOV-site handling -----------------------------------
+	 * Locate the MOVUPS-from-nameAddr site via its 7-byte signature,
+	 * then:
+	 *   short (newLen < origLen): allocate a fresh origLen+1 buffer,
+	 *     copy newStr, null-pad rest, point the 3 MOV source operands
+	 *     at it.  C-string terminates at first null, std::string.size
+	 *     stays at origLen (benign for file loading).
+	 *   equal: patch the 3 source operands only.
+	 *   long (newLen > origLen, byte-copy sites only): flip MOV byte
+	 *     -> MOV dword (opcodes 0x8A->0x8B and 0x88->0x89, both keep
+	 *     encoding size at 6 and 3 bytes respectively), bump length
+	 *     immediate at +0x0A and null-terminator offset at +0x30. */
+	if (isRuneSystem_MOV)
+	{
+		const origLen = name.length;
+		const newLen  = newStr.length;
+
+		const movupsBytes = [0x0F, 0x10, 0x05,
+			 nameAddr         & 0xFF,
+			(nameAddr >>  8)  & 0xFF,
+			(nameAddr >> 16)  & 0xFF,
+			(nameAddr >> 24)  & 0xFF];
+		const movupsHex = movupsBytes.map(b => b.toString(16).padStart(2, '0')).join(' ');
+		const aMovups   = Exe.FindHex(movupsHex);
+		if (aMovups < 0)
+			throw Error(`${_}: MOVUPS load site for ${name} not found`);
+
+		let srcVir = freeVir;
+
+		if (newLen < origLen)
+		{
+			const [padPhy, padVir] = Exe.Allocate(origLen + 1, 0x10);
+			for (let i = 0; i < newLen; i++)
+				Exe.SetUint8(padPhy + i, newStr.charCodeAt(i));
+			for (let i = newLen; i <= origLen; i++)
+				Exe.SetUint8(padPhy + i, 0);
+			srcVir = padVir;
+		}
+		else if (newLen > origLen)
+		{
+			const curOpc = Exe.GetUint8(aMovups + 0x25);
+			if (curOpc === 0x8A)
+			{
+				if (newLen > origLen + 3)
+					throw Error(`${_}: replacement too long (${newLen}); max ${origLen + 3} at this site`);
+				Exe.SetUint8(aMovups + 0x25, 0x8B); // MOV r8, m8  -> MOV r32, m32
+				Exe.SetUint8(aMovups + 0x2B, 0x89); // MOV m8, r8  -> MOV m32, r32
+				Exe.SetUint8(aMovups + 0x0A, newLen);   // length immediate
+				Exe.SetUint8(aMovups + 0x30, newLen);   // null-terminator offset
+			}
+			else if (curOpc === 0x8B)
+			{
+				throw Error(`${_}: copy chain already dword-wide; cannot extend past ${origLen} chars`);
+			}
+			else
+			{
+				throw Error(`${_}: unexpected opcode 0x${curOpc.toString(16)} at MOVUPS+0x25`);
+			}
+		}
+
+		Exe.SetUint32(aMovups + 0x03, srcVir);
+		Exe.SetUint32(aMovups + 0x1C, srcVir + 0x10);
+		Exe.SetUint32(aMovups + 0x27, srcVir + 0x18);
+
+		if (addr > 0)
+			Exe.SetUint32(addr + 1, srcVir);
+	}
+	else if (isRuneSystemTable)
+	{
+		const origLen = name.length; // 32 for System\Rune\runeSystem_table.lub
+		const newLen  = newStr.length;
+
+		const movupsBytes = [0x0F, 0x10, 0x05,
+			 nameAddr         & 0xFF,
+			(nameAddr >>  8)  & 0xFF,
+			(nameAddr >> 16)  & 0xFF,
+			(nameAddr >> 24)  & 0xFF];
+		const movupsHex = movupsBytes.map(b => b.toString(16).padStart(2, '0')).join(' ');
+		const aMovups   = Exe.FindHex(movupsHex);
+		if (aMovups < 0)
+			throw Error(`${_}: MOVUPS load site for ${name} not found`);
+
+		let srcVir = freeVir;
+
+		if (newLen < origLen)
+		{
+			const [padPhy, padVir] = Exe.Allocate(origLen + 1, 0x10);
+			for (let i = 0; i < newLen; i++)
+				Exe.SetUint8(padPhy + i, newStr.charCodeAt(i));
+			for (let i = newLen; i <= origLen; i++)
+				Exe.SetUint8(padPhy + i, 0);
+			srcVir = padVir;
+		}
+		// newLen > origLen blocked by runeCap; newLen == origLen uses freeVir directly.
+
+		Exe.SetUint32(aMovups + 0x03, srcVir);
+		Exe.SetUint32(aMovups + 0x1B, srcVir + 0x10);
+
+		if (addr > 0)
+			Exe.SetUint32(addr + 1, srcVir);
+	}
+	else if (refAddrs == undefined)
 	{
 		Exe.SetUint32(addr + 1, freeVir);
 	}
@@ -645,8 +777,56 @@ CustomLicenseTxt = function(_)
 ///
 /// \brief Change the clientinfo.xml reference to custom file specified by user
 ///
+///
+/// \brief Signature of the 4 MOV [ESP+N], imm32 instructions emitted by
+///        the clientinfo-loader shellcode when it builds "clientinfo.xml"
+///        on the stack for CFile::Open.  Offsets to each dword immediate:
+///           0x03, 0x0B, 0x13, 0x1B.  Total pattern length 0x1F bytes.
+///
+const INJECTED_CLIENTINFO_STACKBUILD =
+	"C7 04 24 63 6C 69 65 " +     // MOV dword ptr [ESP],   "clie"
+	"C7 44 24 04 6E 74 69 6E " +  // MOV dword ptr [ESP+4], "ntin"
+	"C7 44 24 08 66 6F 2E 78 " +  // MOV dword ptr [ESP+8], "fo.x"
+	"C7 44 24 0C 6D 6C 00 00";    // MOV dword ptr [ESP+C], "ml\0\0"
+
 CustomClientInfo = function(_)
 {
+	/* --- 07-16 (or any injection-based) custom path ----------------
+	 * When our clientinfo shellcode is present, the XML filename is
+	 * composed on the stack via 4 MOV-imm32 instructions rather than
+	 * referenced as a static .rdata string.  Detect that pattern and
+	 * patch the 4 immediates to the user-supplied filename. */
+	const aInjected = Exe.FindHex("C7 04 24 63 6C 69 65 C7 44 24 04 6E 74 69 6E C7 44 24 08 66 6F 2E 78 C7 44 24 0C 6D 6C 00 00", 0x00401000, 0x02000000);
+	if (aInjected > 0)
+	{
+		$$(_, 'A.1', `Get the new name from the user (<=15 chars; stack buffer is 16 bytes incl. NUL)`)
+		const varName = '$newclientinfo';
+		const newFile = Exe.GetUserInput(
+			varName, D_Text, "Client Info XML",
+			"Enter the new clientinfo filename. Max 15 characters (the on-stack buffer is 16 bytes including the null terminator).",
+			"clientinfo.xml", {minLen: 1, maxLen: 15}
+		);
+		if (newFile === false)
+			Cancel("Filename", "clientinfo.xml");
+
+		$$(_, 'A.2', `Zero-pad to 16 bytes and write the 4 dword immediates`)
+		const buf = new Array(16).fill(0);
+		for (let i = 0; i < newFile.length; i++)
+			buf[i] = newFile.charCodeAt(i);
+
+		const immOffsets = [0x03, 0x0B, 0x13, 0x1B];
+		for (let i = 0; i < 4; i++)
+		{
+			const dw = (buf[i*4])
+			         | (buf[i*4 + 1] <<  8)
+			         | (buf[i*4 + 2] << 16)
+			         | (buf[i*4 + 3] << 24);
+			Exe.SetUint32(aInjected + immOffsets[i], dw >>> 0);
+		}
+
+		return true;
+	}
+
 	$$(_, 1.1, `Ensure the DGRF object is loaded`)
 	DGRF.load();
 
@@ -780,4 +960,5 @@ CustomClientInfo = function(_)
 /// \brief Disable for Unsupported clients
 ///
 CustomClientInfo.validate = () =>
-	 ROC.ClInfoAddr > 0;
+	 Exe.FindHex("C7 04 24 63 6C 69 65 C7 44 24 04 6E 74 69 6E C7 44 24 08 66 6F 2E 78 C7 44 24 0C 6D 6C 00 00") > 0
+	 || ROC.ClInfoAddr > 0;
