@@ -960,5 +960,5 @@ CustomClientInfo = function(_)
 /// \brief Disable for Unsupported clients
 ///
 CustomClientInfo.validate = () =>
-	 Exe.FindHex("C7 04 24 63 6C 69 65 C7 44 24 04 6E 74 69 6E C7 44 24 08 66 6F 2E 78 C7 44 24 0C 6D 6C 00 00") > 0
+	 Exe.FindHex("C7 04 24 63 6C 69 65 C7 44 24 04 6E 74 69 6E C7 44 24 08 66 6F 2E 78 C7 44 24 0C 6D 6C 00 00", 0x00401000, 0x02000000) > 0
 	 || ROC.ClInfoAddr > 0;
