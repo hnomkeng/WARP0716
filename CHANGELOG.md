@@ -1,3 +1,35 @@
+# CrazyBebop — 2025-07-16 build (Apr 21, 2026)
+
+> **Aftermarket patch — not supported.** LGN active development is on FORGE. WARP0716 is not receiving ongoing maintenance; this is a drop-in fix for community users still running WARP0716.
+
+## Apr 21 Update
+
+### Rune System Paths — Arbitrary Length Within Slot Capacity
+The upstream rune-path patches enforced an exact byte-length match against the original `System\Rune\…` defaults. That made it impossible to use paths like `SystemEN\Rune\itemDecom.lub` (27 chars where the original is 25), which is needed for consistency with Chris's ROenglishRE translation layout.
+
+The 07-16 client loads each rune file via an inlined MOVUPS+MOVQ+MOV(byte|dword) copy sequence with a hardcoded byte count, a hardcoded `std::string::size_` immediate, and a hardcoded null-terminator offset — all set to the original path's length. The strict check existed to stop replacements that would truncate (too long) or read past the end (too short).
+
+Our fork extends the patch logic to handle all three cases without changing the injection:
+
+- **Shorter replacements** — allocate a fresh buffer, write the new path, null-pad out to the original length, then point the MOV source operands at the padded buffer. The client still copies the full original byte count, but the C-string terminates at the first null so file loading picks up the shorter path correctly. `std::string::size_` stays at the original length — harmless for file APIs that use `c_str()`.
+- **Longer replacements on byte-copy sites** (`itemDecom`, `rune_info`) — flip `MOV byte → MOV dword` at the two opcode bytes (`0x8A → 0x8B` and `0x88 → 0x89`, both same instruction size so no shifting), then bump the length immediate and null-terminator offset to the new length. Extends the copy chain from 25 to up to 28 bytes, supporting original+1 through original+3.
+- **runesystemid** already uses `MOV dword` in stock; capped at the original length.
+- **runeSystem_table** uses two `MOVUPS` copying a fixed 32 bytes; capped at the original length.
+
+Verified same instruction offsets on both 07-16 and 06-04 — the VC compiler produces identical sequences.
+
+### CustomClientInfo — Works on 07-16 (Injected Pipeline)
+The stock `CustomClientInfo` patch searched for the `clientinfo.xml` literal as a single string. The 07-16 client doesn't store it that way — the injected clientinfo loader composes the filename on the stack at runtime via four `MOV [ESP+N], imm32` instructions. Result: the patch was always hidden on injected exes.
+
+Added a detection path that recognizes the 4-MOV signature (`C7 04 24 63 6C 69 65 C7 44 24 04 6E 74 69 6E C7 44 24 08 66 6F 2E 78 C7 44 24 0C 6D 6C 00 00`). When found, the patch prompts for a new filename (≤15 chars — the on-stack buffer is 16 bytes including the null terminator) and rewrites the four dword immediates in place. The validator accepts either the injected layout OR a stock `ClInfoAddr > 0`.
+
+To test: select `Customize ClientInfo file` in the WARP UI, type a new name (e.g. `lgro.xml`), drop your renamed XML at `<client>\data\<newname>.xml`.
+
+### Translations EN — Rune Tablet Label
+Added the "Rune of %s" TranslateClient entry (Korean bytes `25 73 C0 C7 20 B7 E9 20 C1 B6 B0 A2` → `Rune of %s`). Used by the Rune Tablet encyclopedia entries (e.g. "Rune of Night Market Bebe").
+
+---
+
 # CrazyBebop — 2025-07-16 build (Mar 29, 2026)
 
 ## Mar 29 Update
