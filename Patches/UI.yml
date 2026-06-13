@@ -194,6 +194,18 @@ CustomUI:
             author : Andrei Karas (4144)
             desc : Restores keyboard input focus to the chat box after clicking with the left mouse button. Fixes the issue where clicking in the game world causes the chat input to lose focus.
 
+        - OpaqueChatBg:
+            title : Make chat window background opaque
+            recommend : no
+            author : Stingor
+            desc : Removes the semi-transparency from the chat window background. By default the background is drawn at 40% alpha (0x66), letting the game world show through. This patch forces it to 100% opaque (0xFF), producing a solid black background.
+
+        - CustomChatBgOpacity:
+            title : Customize chat window background color and opacity
+            recommend : no
+            author : Stingor
+            desc : Changes the color and transparency of the chat window background. Opens a color picker (RGB) and a separate opacity slider (0 = fully transparent, 255 = fully opaque). The default background is pure black at 40% opacity (0x66).
+
         - NoEquipPreview:
             title : Disable equipment preview
             recommend : no
