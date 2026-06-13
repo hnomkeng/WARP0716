@@ -1,7 +1,5 @@
 # CrazyBebop — 2025-07-16 build (May 15, 2026)
 
-> **Hotfix on a discontinued patch — not supported.** LGN active development is on FORGE. WARP0716 is not receiving ongoing maintenance; this is a drop-in fix for community users still running WARP0716.
->
 > **Binary patch — re-WARP required.** Unlike the May 6 / Apr 21 hotfixes, this one changes the `CustomJobs` patch itself, not just Lua data. You must re-apply the WARP patch with the updated `CustomJobs.qjs` for it to take effect — dropping new Lua files alone will **not** enable it.
 
 ## May 15 Update
@@ -35,8 +33,6 @@ Re-apply the WARP patch using the updated `CustomJobs.qjs` from this repo, then 
 
 # CrazyBebop — 2025-07-16 build (May 6, 2026)
 
-> **Hotfix on a discontinued patch — not supported.** LGN active development is on FORGE. WARP0716 is not receiving ongoing maintenance; this is a drop-in fix for community users still running WARP0716.
->
 > **Lua-only — no re-WARP needed.** Drop the new `PCFuncs.lua` and `PCIds.lua` (and optionally `PCNames.lua`) into `data/luafiles514/lua files/JobInfo/`, overwriting existing. Lua data files are loaded at runtime, not baked into the exe.
 
 ## May 6 Hotfix
@@ -84,8 +80,6 @@ Replace `data/luafiles514/lua files/JobInfo/PCFuncs.lua` and `PCIds.lua` (and op
 ---
 
 # CrazyBebop — 2025-07-16 build (Apr 21, 2026)
-
-> **Aftermarket patch — not supported.** LGN active development is on FORGE. WARP0716 is not receiving ongoing maintenance; this is a drop-in fix for community users still running WARP0716.
 
 ## Apr 21 Update
 
