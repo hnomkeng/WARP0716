@@ -2002,7 +2002,153 @@ CustomJobs.apply0716 = function(_)
 	// No binary patches or WARP inputs needed.
 
 
-	$$(_, '0716.13', `Ask about copying Lua files and error display`)
+	// ==========================================================
+	// Phase 13: PCRace — let custom jobs opt into the Doram sprite path
+	// ==========================================================
+	// is_doram_job_id (0x00d9cf80) is a hardcoded switch over the stock
+	// Doram class IDs {0x1079..0x107D, 0x10D4, 0x10DB}. It gates the
+	// "도람족/" sprite branch in CResourceMgr__GetSpritePath plus ~40
+	// other callers (DoramItemOffset, GetSpriteScale, NameplateYOffset,
+	// CItemLayerRenderer, char select/create, styling shop, etc.). A
+	// custom job that wants the Doram race (e.g. PCPaths[id]="summoner")
+	// cannot reach the Doram branch and ends up rendered as human.
+	//
+	// We hook the function's failure exit at 0x00d9cfa4 — every "not a
+	// stock Doram ID" path lands here, either via JA (range miss) or
+	// via the jump-table default. When fired, we consult global Lua
+	// table PCRace; if PCRace[jobid] is non-nil, return AL=1 (Doram).
+	// Otherwise we return AL=0 like the original.
+	//
+	// Lua API (set in any JobInfo .lua loaded by Phase 11):
+	//   PCRace = PCRace or {}
+	//   PCRace[PCIds.MY_CUSTOM_DORAM] = "doram"   -- any truthy value
+	//
+	// GitHub: CrazyBebop/WARP0716#27
+
+	$$(_, '0716.P13.1', `Locate is_doram_job_id failure exit`)
+	const p13Pattern =
+		" 55 8B EC 8B 45 08"           // PUSH EBP; MOV EBP,ESP; MOV EAX,[EBP+8]
+	+	" 05 87 EF FF FF"              // ADD EAX, -0x1079
+	+	" 83 F8 62"                    // CMP EAX, 0x62
+	+	" 77 14"                       // JA failExit (+0x14)
+	;
+	const p13EntryPhys = Exe.FindHex(p13Pattern);
+	if (p13EntryPhys < 0)
+		throw Error("Phase 13: is_doram_job_id prologue not found");
+
+	const p13EntryVir = Exe.Phy2Vir(p13EntryPhys, CODE);
+	const p13FailVir  = p13EntryVir + 0x24;  // = 0x00d9cfa4
+	const p13FailPhys = Exe.Vir2Phy(p13FailVir, CODE);
+
+	$$(_, '0716.P13.2', `Verify failure-exit bytes`)
+	const failBytes = Exe.GetHex(p13FailPhys, 6);
+	if (failBytes !== " 32 C0 5D C2 04 00")
+		throw Error("Phase 13: failure exit bytes mismatch — got" + failBytes);
+
+	$$(_, '0716.P13.3', `Build PCRace trampoline`)
+	// Entered with EBP still saved (POP EBP not yet executed at 0xd9cfa4).
+	// jobId is at [EBP+8] (stdcall RET 4).
+
+	const p13_lua_getfield = 0x519DF0;
+	const p13_lua_rawgeti  = 0x51A650;
+	const p13_lua_settop   = 0x51AAB0;
+	const p13_lua_type     = 0x51AE20;
+
+	let p13 = "";
+
+	// MOV EAX, [g_luaState]; TEST EAX,EAX; JZ .nope
+	p13 += " A1" + g_luaState.toHex(4);
+	p13 += " 85 C0";
+	p13 += JZ(Filler(80));
+
+	// lua_getfield(L, LUA_GLOBALSINDEX, "PCRace")
+	const p13PushStrOff = p13.byteCount();
+	p13 += " 68 00 00 00 00";              // PUSH &"PCRace" (fixup below)
+	p13 += " 68 EE D8 FF FF";              // PUSH -10002 (LUA_GLOBALSINDEX)
+	p13 += " 50";                          // PUSH EAX (L)
+	p13 += CALL(Filler(91));                // CALL lua_getfield
+	p13 += " 83 C4 0C";                    // ADD ESP, 12
+
+	// lua_type(L,-1) — must be LUA_TTABLE (5), else pop1_nope
+	p13 += " 6A FF";                       // PUSH -1
+	p13 += " FF 35" + g_luaState.toHex(4); // PUSH [g_luaState]
+	p13 += CALL(Filler(94));                // CALL lua_type
+	p13 += " 83 C4 08";                    // ADD ESP, 8
+	p13 += " 83 F8 05";                    // CMP EAX, 5 (LUA_TTABLE)
+	p13 += JNE(Filler(81));                 // JNE .pop1_nope
+
+	// lua_rawgeti(L, -1, jobid)
+	p13 += " FF 75 08";                    // PUSH [EBP+8] (jobid)
+	p13 += " 6A FF";                       // PUSH -1
+	p13 += " FF 35" + g_luaState.toHex(4); // PUSH [g_luaState]
+	p13 += CALL(Filler(92));                // CALL lua_rawgeti
+	p13 += " 83 C4 0C";
+
+	// lua_type — any non-nil = Doram
+	p13 += " 6A FF";
+	p13 += " FF 35" + g_luaState.toHex(4);
+	p13 += CALL(Filler(94));                // CALL lua_type
+	p13 += " 83 C4 08";
+	p13 += " 85 C0";                       // TEST EAX, EAX (LUA_TNIL == 0)
+	p13 += JZ(Filler(82));                  // JZ .pop2_nope
+
+	// Doram hit — settop(L,-3) pops table + value
+	p13 += " 6A FD";                       // PUSH -3
+	p13 += " FF 35" + g_luaState.toHex(4);
+	p13 += CALL(Filler(93));                // CALL lua_settop
+	p13 += " 83 C4 08";
+	p13 += " B0 01";                       // MOV AL, 1
+	p13 += " 5D";                          // POP EBP
+	p13 += " C2 04 00";                    // RET 4
+
+	// .pop2_nope: have table + value on stack
+	const p13Pop2Off = p13.byteCount();
+	p13 += " 6A FD";                       // PUSH -3
+	p13 += " FF 35" + g_luaState.toHex(4);
+	p13 += CALL(Filler(93));
+	p13 += " 83 C4 08";
+	p13 += JMP(Filler(80));                 // JMP .nope
+
+	// .pop1_nope: have table on stack
+	const p13Pop1Off = p13.byteCount();
+	p13 += " 6A FE";                       // PUSH -2
+	p13 += " FF 35" + g_luaState.toHex(4);
+	p13 += CALL(Filler(93));
+	p13 += " 83 C4 08";
+
+	// .nope: XOR AL,AL; POP EBP; RET 4
+	const p13NopeOff = p13.byteCount();
+	p13 += " 32 C0";
+	p13 += " 5D";
+	p13 += " C2 04 00";
+
+	// Data: "PCRace\0"
+	const p13StrOff = p13.byteCount();
+	p13 += " 50 43 52 61 63 65 00";
+
+	$$(_, '0716.P13.4', `Allocate trampoline and patch failure exit`)
+	const [p13TrPhys, p13TrVir] = Exe.Allocate(p13.byteCount(), 0x10);
+
+	Exe.SetHex(p13TrPhys, SetFillTargets(p13, {
+		start: p13TrVir,
+		80: p13TrVir + p13NopeOff,
+		81: p13TrVir + p13Pop1Off,
+		82: p13TrVir + p13Pop2Off,
+		91: p13_lua_getfield,
+		92: p13_lua_rawgeti,
+		93: p13_lua_settop,
+		94: p13_lua_type
+	}));
+	// Fix up absolute PUSH &"PCRace"
+	Exe.SetInt32(p13TrPhys + p13PushStrOff + 1, p13TrVir + p13StrOff);
+
+	// Replace 6-byte failure exit with JMP rel32 → trampoline + 1 NOP
+	Exe.SetHex(p13FailPhys, SetFillTargets(JMP(Filler(1)), {
+		start: p13FailVir, 1: p13TrVir
+	}) + " 90");
+
+
+	$$(_, '0716.14', `Ask about copying Lua files and error display`)
 	if (!Warp.TestMode)
 	{
 		Exe.GetUserInput('$copyCJLub', D_Bool, "Copy Custom Job Lua", "Do you want the supporting Lub files copied to <b>'data'</b> folder when patch is applied?", true);
